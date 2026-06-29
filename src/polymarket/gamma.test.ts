@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   btc5mEventSlugFromWindowStart,
   btc5mWindowStartsAround,
+  currentBtc5mWindowStartSec,
   isBtc5mUpDownSlug,
   mapGammaMarketToUpDown,
 } from "./gamma.js";
@@ -16,6 +17,14 @@ describe("btc5m slug helpers", () => {
   it("aligns window starts to 5-minute boundaries", () => {
     const starts = btc5mWindowStartsAround(1782728100 + 120, { behind: 1, ahead: 1 });
     expect(starts).toEqual([1782727800, 1782728100, 1782728400]);
+  });
+
+  it("computes current window start from clock", () => {
+    const nowMs = 1782728100 * 1000 + 120_000;
+    expect(currentBtc5mWindowStartSec(nowMs)).toBe(1782728100);
+    expect(btc5mEventSlugFromWindowStart(currentBtc5mWindowStartSec(nowMs))).toBe(
+      "btc-updown-5m-1782728100",
+    );
   });
 });
 

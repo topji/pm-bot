@@ -104,13 +104,19 @@ export function btc5mEventSlugFromWindowStart(windowStartSec: number): string {
   return `btc-updown-5m-${windowStartSec}`;
 }
 
+/** Unix seconds at the start of the current 5-minute BTC window. */
+export function currentBtc5mWindowStartSec(nowMs = Date.now()): number {
+  const nowSec = Math.floor(nowMs / 1000);
+  return Math.floor(nowSec / BTC5M_WINDOW_SEC) * BTC5M_WINDOW_SEC;
+}
+
 /** Window starts to poll: previous, current, and upcoming 5m windows. */
 export function btc5mWindowStartsAround(
   nowSec: number,
   opts?: { behind?: number; ahead?: number },
 ): number[] {
   const behind = opts?.behind ?? 1;
-  const ahead = opts?.ahead ?? 4;
+  const ahead = opts?.ahead ?? 1;
   const current = Math.floor(nowSec / BTC5M_WINDOW_SEC) * BTC5M_WINDOW_SEC;
   const starts: number[] = [];
   for (let i = -behind; i <= ahead; i++) {
@@ -184,23 +190,21 @@ export async function fetchBtc5mMarketsFromEvents(endpoints: Endpoints): Promise
   return raw;
 }
 
-export async function discoverBtc5mUpDownMarkets(endpoints: Endpoints): Promise<GammaMarket[]> {
-  const fromSlugs = await fetchBtc5mMarketsByComputedSlugs(endpoints);
-  const fromEvents = await fetchBtc5mMarketsFromEvents(endpoints);
-  const fromFlatList = await fetchActiveMarkets(endpoints, 500).then((rows) =>
-    rows.filter(isLikelyBtc5mMarket),
-  );
-
-  const seen = new Set<string>();
-  const candidates: GammaMarketRaw[] = [];
-  for (const row of [...fromSlugs, ...fromEvents, ...fromFlatList]) {
-    if (seen.has(row.id)) continue;
-    seen.add(row.id);
-    candidates.push(row);
-  }
+/**
+ * Discover the active BTC 5m market(s) for the current clock window only.
+ *
+ * Slug format: `btc-updown-5m-{windowStartUnix}` where windowStartUnix is
+ * floor(now/300)*300. We fetch previous + current + next window (3 Gamma calls)
+ * so we can enter the live window and cancel orders on the one expiring soon.
+ */
+export async function discoverBtc5mUpDownMarkets(
+  endpoints: Endpoints,
+  nowMs = Date.now(),
+): Promise<GammaMarket[]> {
+  const raw = await fetchBtc5mMarketsByComputedSlugs(endpoints, nowMs);
 
   const mapped: GammaMarket[] = [];
-  for (const r of candidates) {
+  for (const r of raw) {
     const m = mapGammaMarketToUpDown(r);
     if (m && !m.closed) mapped.push(m);
   }

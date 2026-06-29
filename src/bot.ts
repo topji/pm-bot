@@ -10,7 +10,7 @@ import { outcomeTokenId, outcomeTokenIdFromRow } from "./polymarket/types.js";
 import { discoverBtc5mUpDownMarkets } from "./polymarket/gamma.js";
 import { createBotWallets, deriveDepositWalletForBot } from "./polymarket/wallets.js";
 import { createDepositWalletClobClient, loadOrCreateClobCreds } from "./polymarket/clob.js";
-import { placeExactEntryAtPrice, secondsToExpiry } from "./polymarket/orders.js";
+import { canPlaceEntryNow, placeExactEntryAtPrice, secondsToExpiry } from "./polymarket/orders.js";
 import { cancelEntryOrdersNearExpiry, hasEntryForMarket } from "./polymarket/entryOrders.js";
 import { fetchPositionsForUser } from "./polymarket/dataApi.js";
 import { runStopLossSupervisor } from "./polymarket/stopLossSupervisor.js";
@@ -110,9 +110,16 @@ async function botTick(params: {
   const nowMs = Date.now();
 
   // 1) Market discovery
-  const markets = await discoverBtc5mUpDownMarkets(params.endpoints);
+  const markets = await discoverBtc5mUpDownMarkets(params.endpoints, nowMs);
   upsertMarkets(params.db, markets, nowMs);
-  params.log.debug({ count: markets.length }, "markets scanned");
+  params.log.debug(
+    {
+      count: markets.length,
+      windowStartSec: Math.floor(nowMs / 1000 / 300) * 300,
+      slugs: markets.map((m) => m.slug),
+    },
+    "markets scanned",
+  );
 
   // 2) Fetch current positions (deposit wallet)
   const positions = await fetchPositionsForUser(params.endpoints, params.depositWalletAddress);
@@ -160,6 +167,14 @@ async function botTick(params: {
     // Attempt entries for markets we have not yet tried on this side.
     for (const m of markets) {
       if (openPosCount >= params.config.maxConcurrentPositions) break;
+
+      const entryGate = canPlaceEntryNow({ endDateIso: m.endDate, nowMs });
+      if (!entryGate.allowed) {
+        if (entryGate.reason !== "too_early") {
+          params.log.debug({ market: m.slug, reason: entryGate.reason }, "entry skipped");
+        }
+        continue;
+      }
 
       const tokenId = outcomeTokenId(m, orderSide);
       const alreadyHasEntry = await hasEntryForMarket({
