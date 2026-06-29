@@ -1,0 +1,44 @@
+{
+  "name": "pm-bot",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Polymarket BTC 5-minute automated trading bot",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "cli": "tsx src/cli.ts",
+    "start": "node --enable-source-maps dist/index.js",
+    "analytics": "tsx src/analytics/index.ts",
+    "analytics:start": "node --enable-source-maps dist/analytics/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@polymarket/clob-client-v2": "^1.0.6",
+    "better-sqlite3": "^11.8.0",
+    "dotenv": "^16.6.1",
+    "pino": "^9.8.0",
+    "viem": "^2.37.5",
+    "zod": "^4.1.5",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.17.0",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.32.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.38.0",
+    "vitest": "^3.2.4"
+  }
+}
