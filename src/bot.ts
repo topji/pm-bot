@@ -78,15 +78,19 @@ export async function runBot(params: { config: BotConfig; log: pino.Logger; db: 
   // This keeps behavior idempotent across restarts.
   while (true) {
     const loopStartMs = Date.now();
-    await botTick({
-      config: params.config,
-      log: params.log,
-      db: params.db,
-      endpoints,
-      clob,
-      depositWalletAddress,
-      wallets,
-    });
+    try {
+      await botTick({
+        config: params.config,
+        log: params.log,
+        db: params.db,
+        endpoints,
+        clob,
+        depositWalletAddress,
+        wallets,
+      });
+    } catch (err) {
+      params.log.error({ err }, "bot tick failed");
+    }
 
     const elapsed = Date.now() - loopStartMs;
     const sleepMs = Math.max(250, params.config.scanIntervalMs - elapsed);

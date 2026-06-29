@@ -11,13 +11,32 @@ const GammaMarketRawSchema = z.object({
   endDate: z.string(),
   negRisk: z.boolean().optional().default(false),
   conditionId: z.string().optional().default(""),
-  outcomes: z.string(), // JSON string array
-  outcomePrices: z.string(), // JSON string array
-  clobTokenIds: z.string(), // JSON string array
+  outcomes: z.string().optional().default("[]"),
+  outcomePrices: z.string().optional(),
+  clobTokenIds: z.string().optional().default("[]"),
   orderPriceMinTickSize: z.union([z.string(), z.number()]).transform(String),
 });
 
 type GammaMarketRaw = z.infer<typeof GammaMarketRawSchema>;
+
+const GammaEventLooseSchema = z.object({
+  slug: z.string(),
+  markets: z.array(z.unknown()).optional(),
+});
+
+function parseGammaMarketRaw(value: unknown): GammaMarketRaw | null {
+  const parsed = GammaMarketRawSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function marketsFromEvent(event: z.infer<typeof GammaEventLooseSchema>): GammaMarketRaw[] {
+  const rows: GammaMarketRaw[] = [];
+  for (const market of event.markets ?? []) {
+    const parsed = parseGammaMarketRaw(market);
+    if (parsed) rows.push(parsed);
+  }
+  return rows;
+}
 
 function parseJsonStringArray(value: string): string[] {
   const parsed = JSON.parse(value) as unknown;
@@ -69,9 +88,13 @@ export async function fetchActiveMarkets(endpoints: Endpoints, limit = 200): Pro
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Gamma markets fetch failed: ${res.status} ${res.statusText}`);
   const json = await res.json();
-  const arr = z.array(GammaMarketRawSchema).safeParse(json);
-  if (!arr.success) throw new Error(`Gamma markets parse failed: ${arr.error.message}`);
-  return arr.data;
+  if (!Array.isArray(json)) return [];
+  const rows: GammaMarketRaw[] = [];
+  for (const item of json) {
+    const parsed = parseGammaMarketRaw(item);
+    if (parsed) rows.push(parsed);
+  }
+  return rows;
 }
 
 export const BTC5M_WINDOW_SEC = 300;
@@ -105,11 +128,11 @@ async function fetchEventMarketsBySlug(
   const res = await fetch(url);
   if (!res.ok) return [];
   const json = await res.json();
-  const arr = z.array(GammaEventWithMarketsSchema).safeParse(json);
+  const arr = z.array(GammaEventLooseSchema).safeParse(json);
   if (!arr.success || arr.data.length === 0) return [];
   const event = arr.data[0];
   if (!event || !isBtc5mUpDownSlug(event.slug)) return [];
-  return event.markets ?? [];
+  return marketsFromEvent(event);
 }
 
 /** Fetch the live rolling windows by slug (matches polymarket.com/event/btc-updown-5m-{ts}). */
@@ -136,11 +159,6 @@ export function isLikelyBtc5mMarket(m: GammaMarketRaw): boolean {
   return false;
 }
 
-const GammaEventWithMarketsSchema = z.object({
-  slug: z.string(),
-  markets: z.array(GammaMarketRawSchema).optional(),
-});
-
 /** BTC 5m up/down markets are published as rolling events (`btc-updown-5m-*`), not in the flat /markets feed. */
 export async function fetchBtc5mMarketsFromEvents(endpoints: Endpoints): Promise<GammaMarketRaw[]> {
   const url = new URL("/events", endpoints.gammaBaseUrl);
@@ -153,15 +171,15 @@ export async function fetchBtc5mMarketsFromEvents(endpoints: Endpoints): Promise
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Gamma events fetch failed: ${res.status} ${res.statusText}`);
   const json = await res.json();
-  const arr = z.array(GammaEventWithMarketsSchema).safeParse(json);
-  if (!arr.success) throw new Error(`Gamma events parse failed: ${arr.error.message}`);
+  const arr = z.array(GammaEventLooseSchema).safeParse(json);
+  if (!arr.success) {
+    throw new Error(`Gamma events parse failed: ${arr.error.message}`);
+  }
 
   const raw: GammaMarketRaw[] = [];
   for (const event of arr.data) {
     if (!isBtc5mUpDownSlug(event.slug)) continue;
-    for (const market of event.markets ?? []) {
-      raw.push(market);
-    }
+    raw.push(...marketsFromEvent(event));
   }
   return raw;
 }
