@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { loadConfig } from "./config.js";
 
-const TEST_KEY = "0x9dbde49b815ff26315ce8baa4faa633f3dfe3f71234adaf52de94f741e84275e";
+// Dummy key for unit tests only — never use for real funds.
+const TEST_KEY = "0x0000000000000000000000000000000000000000000000000000000000000001";
 
 describe("loadConfig", () => {
   it("fails when BOT_PRIVATE_KEY is missing", () => {
