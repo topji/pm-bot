@@ -33,7 +33,7 @@ export type PlaceExactEntryInput = {
   market: GammaMarket;
   orderSide: OrderSide;
   usdPerTrade: number;
-  exactPrice: number; // e.g. 0.30
+  exactPrice: number; // e.g. 0.33
   nowMs: number;
 };
 

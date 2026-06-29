@@ -17,6 +17,7 @@ const ConfigSchema = z.object({
   depositWalletAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
 
   // Execution settings
+  entryPrice: z.coerce.number().positive().max(1).default(0.33),
   usdPerTrade: z.coerce.number().positive().default(1),
   orderSide: z
     .preprocess((v) => (typeof v === "string" ? v.toUpperCase() : v), z.enum(["UP", "DOWN"]))
@@ -51,6 +52,7 @@ export function loadConfig(): BotConfig {
     dataApiUrl: process.env.DATA_API_URL,
     safeAddress: process.env.SAFE_ADDRESS,
     depositWalletAddress: process.env.DEPOSIT_WALLET_ADDRESS,
+    entryPrice: process.env.ENTRY_PRICE,
     usdPerTrade: process.env.USD_PER_TRADE ?? process.env.USD_BUDGET_PER_MARKET,
     orderSide: process.env.ORDER_SIDE,
     maxConcurrentPositions: process.env.MAX_CONCURRENT_POSITIONS,

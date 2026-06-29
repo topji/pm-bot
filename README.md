@@ -2,7 +2,7 @@
 
 Implements the execution rules in `bot-requirements.md`:
 
-- Entry: **one** limit buy at **0.30** per market per side (`ORDER_SIDE`); auto-cancelled if &lt;30s to expiry
+- Entry: **one** limit buy at **0.33** per market per side (`ORDER_SIDE`, override with `ENTRY_PRICE`); auto-cancelled if &lt;30s to expiry
 - Stop: **0.15** Mode A — best bid polled every **1s** (`STOP_POLL_MS`, default `1000`)
 - Otherwise hold to resolution and **redeem on-chain**
 - Entry window gating: place entries only when **30s–290s** to expiry
@@ -25,6 +25,7 @@ npm install
 BOT_PRIVATE_KEY=0x...
 DEPOSIT_WALLET_ADDRESS=0x...
 USD_PER_TRADE=1
+ENTRY_PRICE=0.33
 ORDER_SIDE=UP
 MAX_CONCURRENT_POSITIONS=2
 MAX_TOTAL_USD_EXPOSURE=100
@@ -40,7 +41,8 @@ KILL_SWITCH=false
 | Variable | Description |
 |----------|-------------|
 | `USD_PER_TRADE` | USD collateral per entry order (default `1`). `USD_BUDGET_PER_MARKET` is accepted as a legacy alias. |
-| `ORDER_SIDE` | `UP` or `DOWN` — which outcome token to buy at 0.30 (default `UP`). |
+| `ENTRY_PRICE` | Limit buy price (default `0.33`). Must be valid for market tick size. |
+| `ORDER_SIDE` | `UP` or `DOWN` — which outcome token to buy (default `UP`). |
 | `STOP_POLL_MS` | Stop-loss price check interval in ms (default `1000` = 1 second). |
 
 ### Running UP and DOWN in parallel

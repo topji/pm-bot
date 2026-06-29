@@ -56,6 +56,7 @@ export async function runBot(params: { config: BotConfig; log: pino.Logger; db: 
       depositWalletAddress,
       orderSide: params.config.orderSide,
       usdPerTrade: params.config.usdPerTrade,
+      entryPrice: params.config.entryPrice,
       stopPollMs: params.config.stopPollMs,
     },
     "bot initialized",
@@ -171,7 +172,7 @@ async function botTick(params: {
         market: m,
         orderSide,
         usdPerTrade: params.config.usdPerTrade,
-        exactPrice: 0.3,
+        exactPrice: params.config.entryPrice,
         nowMs,
       });
       if ("skipped" in res) {
@@ -195,8 +196,8 @@ async function botTick(params: {
           order_side: orderSide,
           order_id: res.orderId,
           order_type: res.orderType,
-          entry_price: 0.3,
-          entry_shares: params.config.usdPerTrade / 0.3,
+          entry_price: params.config.entryPrice,
+          entry_shares: params.config.usdPerTrade / params.config.entryPrice,
           stop_price: 0.15,
           updated_at_ms: nowMs,
         });
@@ -211,7 +212,7 @@ async function botTick(params: {
         entryPlacedAtMs: nowMs,
         secondsToExpiryAtEntry: secsToExpiry >= 0 ? secsToExpiry : 0,
         entryOrderId: res.orderId,
-        intendedEntryPrice: 0.3,
+        intendedEntryPrice: params.config.entryPrice,
         intendedEntryUsd: params.config.usdPerTrade,
       });
 
