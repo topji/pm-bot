@@ -149,6 +149,7 @@ async function botTick(params: {
     markets,
     orderSide,
     nowMs,
+    positions,
   });
   if (cancelResult.cancelled > 0) {
     params.log.info(

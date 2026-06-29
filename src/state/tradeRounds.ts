@@ -216,7 +216,7 @@ export function markTradeRoundEntryCancelled(
       exit_usd = 0,
       pnl_usd = 0,
       updated_at_ms = @updated_at_ms
-    WHERE market_id = @market_id AND order_side = @order_side AND exit_at_ms IS NULL
+    WHERE market_id = @market_id AND order_side = @order_side AND exit_at_ms IS NULL AND filled = 0
   `,
   ).run({
     market_id: params.marketId,

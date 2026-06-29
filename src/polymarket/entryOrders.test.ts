@@ -57,6 +57,48 @@ describe("entryOrders", () => {
     db.close();
   });
 
+  it("does not mark filled trade rounds cancelled when cancelling open buy remainder", async () => {
+    const cancelOrder = vi.fn().mockResolvedValue({});
+    const client = {
+      getOpenOrders: vi.fn().mockResolvedValue([{ id: "ord-1", side: "BUY", price: "0.33" }]),
+      cancelOrder,
+    } as unknown as ClobClient;
+
+    const { db } = openDb(":memory:");
+    db.prepare(
+      `
+      INSERT INTO market_state (market_id, order_side, status, updated_at_ms)
+      VALUES ('m1', 'DOWN', 'entryPlaced', 0)
+    `,
+    ).run();
+    db.prepare(
+      `
+      INSERT INTO trade_rounds (
+        market_id, order_side, slug, filled, entry_placed_at_ms, updated_at_ms
+      )
+      VALUES ('m1', 'DOWN', 'btc-updown-5m-test', 1, 0, 0)
+    `,
+    ).run();
+
+    const market = makeMarket();
+    const result = await cancelEntryOrdersNearExpiry({
+      client,
+      db,
+      markets: [market],
+      orderSide: "DOWN",
+      nowMs: Date.now(),
+      positions: [{ asset: "down-token", size: 6.1 }],
+    });
+
+    expect(result.cancelled).toBe(1);
+    const round = db
+      .prepare(`SELECT filled, exit_type FROM trade_rounds WHERE market_id = 'm1'`)
+      .get() as { filled: number; exit_type: string | null };
+    expect(round.filled).toBe(1);
+    expect(round.exit_type).toBeNull();
+    db.close();
+  });
+
   it("hasEntryForMarket is true when a live CLOB buy exists", async () => {
     const client = {
       getOpenOrders: vi.fn().mockResolvedValue([{ id: "ord-1", side: "BUY", price: "0.30" }]),

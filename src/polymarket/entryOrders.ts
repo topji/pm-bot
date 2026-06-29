@@ -8,7 +8,13 @@ import {
   markTradeRoundEntryCancelled,
 } from "../state/tradeRounds.js";
 
+import type { DataApiPosition } from "./types.js";
+
 const ENTRY_MIN_SECONDS = 30;
+
+export function isSellOpenOrder(side: string | undefined): boolean {
+  return side?.toUpperCase() === "SELL";
+}
 
 export function isBuyOpenOrder(side: string | undefined): boolean {
   return side?.toUpperCase() === "BUY";
@@ -51,6 +57,8 @@ export async function cancelEntryOrdersNearExpiry(params: {
   markets: GammaMarket[];
   orderSide: OrderSide;
   nowMs: number;
+  /** Live positions — skip bookkeeping cancel when shares are held (filled trade). */
+  positions?: DataApiPosition[] | undefined;
 }): Promise<CancelNearExpiryResult> {
   const marketsCancelled: string[] = [];
   let cancelled = 0;
@@ -59,14 +67,21 @@ export async function cancelEntryOrdersNearExpiry(params: {
     if (secondsToExpiry(market.endDate, params.nowMs) >= ENTRY_MIN_SECONDS) continue;
 
     const tokenId = outcomeTokenId(market, params.orderSide);
+    const heldShares =
+      params.positions?.find((p) => p.asset === tokenId && (p.size ?? 0) > 0)?.size ?? 0;
+
     const openBuys = await fetchOpenBuyOrdersForAsset(params.client, tokenId);
     if (openBuys.length === 0) continue;
 
     for (const order of openBuys) {
+      if (isSellOpenOrder(order.side)) continue;
       await params.client.cancelOrder({ orderID: order.id });
       cancelled += 1;
     }
     marketsCancelled.push(market.slug);
+
+    // Never mark a filled round cancelled — that only applies to unfilled entry limits.
+    if (heldShares > 0) continue;
 
     params.db
       .prepare(
