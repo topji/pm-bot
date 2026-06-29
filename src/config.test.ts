@@ -51,5 +51,20 @@ describe("loadConfig", () => {
     if (oldSide) process.env.ORDER_SIDE = oldSide;
     else delete process.env.ORDER_SIDE;
   });
+
+  it("parses KILL_SWITCH=false as false (not Zod coerce truthy string)", () => {
+    const oldKey = process.env.BOT_PRIVATE_KEY;
+    const oldKill = process.env.KILL_SWITCH;
+
+    process.env.BOT_PRIVATE_KEY = TEST_KEY;
+    process.env.KILL_SWITCH = "false";
+
+    expect(loadConfig().killSwitch).toBe(false);
+
+    if (oldKey) process.env.BOT_PRIVATE_KEY = oldKey;
+    else delete process.env.BOT_PRIVATE_KEY;
+    if (oldKill) process.env.KILL_SWITCH = oldKill;
+    else delete process.env.KILL_SWITCH;
+  });
 });
 

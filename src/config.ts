@@ -1,6 +1,17 @@
 import "dotenv/config";
 import { z } from "zod";
 
+function parseEnvBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "no") return false;
+  }
+  return undefined;
+}
+
 const ConfigSchema = z.object({
   nodeEnv: z.enum(["development", "test", "production"]).default("development"),
 
@@ -37,8 +48,8 @@ const ConfigSchema = z.object({
   // Polygon RPC for on-chain reads/writes used by redeem.
   polygonRpcUrl: z.string().url().optional(),
 
-  // Ops
-  killSwitch: z.coerce.boolean().default(false),
+  // Ops — do not use z.coerce.boolean(); the string "false" coerces to true in Zod.
+  killSwitch: z.preprocess(parseEnvBoolean, z.boolean()).default(false),
 });
 
 export type BotConfig = z.infer<typeof ConfigSchema>;
