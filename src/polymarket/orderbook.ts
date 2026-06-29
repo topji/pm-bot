@@ -24,9 +24,31 @@ export async function fetchOrderBook(endpoints: Endpoints, tokenId: string): Pro
   return parsed.data;
 }
 
+/**
+ * Best (highest) bid — the price we can actually sell into right now.
+ *
+ * Polymarket's /book returns bids sorted ASCENDING, so the best bid is the
+ * LAST element, not bids[0]. We take the max across all levels to stay correct
+ * regardless of ordering. Returns 0 when the book has no bids.
+ */
 export function bestBidPrice(book: OrderBookSummary): number {
-  const bid = book.bids?.[0]?.price;
-  const n = bid ? Number(bid) : 0;
-  return Number.isFinite(n) ? n : 0;
+  const prices = (book.bids ?? [])
+    .map((level) => Number(level.price))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return prices.length ? Math.max(...prices) : 0;
+}
+
+/**
+ * Best (lowest) ask — the price we'd pay to buy right now.
+ *
+ * Polymarket's /book returns asks sorted DESCENDING, so the best ask is the
+ * LAST element. We take the min across all levels to stay correct regardless
+ * of ordering. Returns 0 when the book has no asks.
+ */
+export function bestAskPrice(book: OrderBookSummary): number {
+  const prices = (book.asks ?? [])
+    .map((level) => Number(level.price))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return prices.length ? Math.min(...prices) : 0;
 }
 

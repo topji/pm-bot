@@ -99,6 +99,28 @@ describe("entryOrders", () => {
     db.close();
   });
 
+  it("treats getOpenOrders failures as no open buys", async () => {
+    const client = {
+      getOpenOrders: vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("response.data is not iterable"))
+        .mockResolvedValueOnce([]),
+    } as unknown as ClobClient;
+
+    const { db } = openDb(":memory:");
+    const market = makeMarket({ endDate: new Date(Date.now() + 20_000).toISOString() });
+    const result = await cancelEntryOrdersNearExpiry({
+      client,
+      db,
+      markets: [market],
+      orderSide: "UP",
+      nowMs: Date.now(),
+    });
+
+    expect(result.cancelled).toBe(0);
+    db.close();
+  });
+
   it("hasEntryForMarket is true when a live CLOB buy exists", async () => {
     const client = {
       getOpenOrders: vi.fn().mockResolvedValue([{ id: "ord-1", side: "BUY", price: "0.30" }]),

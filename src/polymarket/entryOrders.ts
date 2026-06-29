@@ -20,11 +20,37 @@ export function isBuyOpenOrder(side: string | undefined): boolean {
   return side?.toUpperCase() === "BUY";
 }
 
+async function safeGetOpenOrders(
+  client: ClobClient,
+  params?: { asset_id: string },
+): Promise<{ id: string; side: string; price: string; asset_id?: string }[]> {
+  try {
+    const orders = await client.getOpenOrders(params, true);
+    if (Array.isArray(orders)) return orders;
+  } catch {
+    // CLOB client throws when response.data is missing or not an array (common with asset_id filter).
+  }
+
+  // Fallback: unfiltered list, then match asset locally.
+  if (params?.asset_id) {
+    try {
+      const all = await client.getOpenOrders(undefined, true);
+      if (Array.isArray(all)) {
+        return all.filter((o) => o.asset_id === params.asset_id);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return [];
+}
+
 export async function fetchOpenBuyOrdersForAsset(
   client: ClobClient,
   assetId: string,
 ): Promise<{ id: string; side: string; price: string }[]> {
-  const orders = await client.getOpenOrders({ asset_id: assetId }, true);
+  const orders = await safeGetOpenOrders(client, { asset_id: assetId });
   return orders.filter((o) => isBuyOpenOrder(o.side));
 }
 

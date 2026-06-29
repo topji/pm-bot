@@ -59,12 +59,18 @@ export async function runStopLossModeAOnce(
     const filledUsd = resp.takingAmount;
     const filled = Number(filledUsd);
     if (resp.orderID && Number.isFinite(filled) && filled > 0) {
+      // Realized exit price: for a SELL, makingAmount = shares sold,
+      // takingAmount = USDC received. The actual fill can be well above our
+      // protective limit cap, so report what we truly got, not limitPrice.
+      const soldShares = Number(resp.makingAmount);
+      const realizedPrice =
+        Number.isFinite(soldShares) && soldShares > 0 ? filled / soldShares : limitPrice;
       return {
         status: "stopped",
         orderId: resp.orderID,
         filledUsd,
         retries,
-        exitPrice: limitPrice,
+        exitPrice: realizedPrice,
         shares: cfg.shares,
         makingAmount: resp.makingAmount || undefined,
         takingAmount: resp.takingAmount || undefined,
