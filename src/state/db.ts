@@ -1,10 +1,24 @@
 import Database from "better-sqlite3";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export type BotDb = {
   db: Database.Database;
   close: () => void;
 };
+
+function loadSchemaSql(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(here, "schema.sql"),
+    join(here, "../../src/state/schema.sql"),
+  ];
+  for (const path of candidates) {
+    if (existsSync(path)) return readFileSync(path, "utf8");
+  }
+  throw new Error(`schema.sql not found (tried: ${candidates.join(", ")})`);
+}
 
 function migrateMarketStateOrderSide(db: Database.Database): void {
   const cols = db.prepare("PRAGMA table_info(market_state)").all() as { name: string }[];
@@ -44,7 +58,7 @@ export function openDb(dbPath: string): BotDb {
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
 
-  const schema = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+  const schema = loadSchemaSql();
   db.exec(schema);
   migrateMarketStateOrderSide(db);
 

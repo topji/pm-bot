@@ -13,7 +13,7 @@
     "start": "node --enable-source-maps dist/index.js",
     "analytics": "tsx src/analytics/index.ts",
     "analytics:start": "node --enable-source-maps dist/analytics/index.js",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/state && cp src/state/schema.sql dist/state/schema.sql",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
