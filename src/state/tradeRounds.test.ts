@@ -6,6 +6,7 @@ import {
   closeTradeRoundAtResolution,
   closeTradeRoundWithRedeem,
   closeTradeRoundWithStop,
+  closeTradeRoundWithTakeProfit,
   getTradeRound,
   markEntryFilled,
   markTradeRoundEntryCancelled,
@@ -146,6 +147,50 @@ describe("tradeRounds", () => {
     expect(row?.stop_triggered).toBe(0);
     expect(row?.exit_usd).toBe(3.33);
     expect(row?.pnl_usd).toBeCloseTo(2.33, 5);
+    db.close();
+  });
+
+  it("records a take-profit round: profit, exit_type, stop_triggered = 0", () => {
+    const db = openTestDb();
+    const now = Date.now();
+
+    openTradeRound(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      slug: "btc-updown-5m-test",
+      entryPlacedAtMs: now,
+      secondsToExpiryAtEntry: 200,
+      entryOrderId: "ord-entry",
+      intendedEntryPrice: 0.33,
+      intendedEntryUsd: 2,
+    });
+    markEntryFilled(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      entryFilledAtMs: now + 500,
+      entryPrice: 0.33,
+      shares: 6,
+      entryUsd: 1.98,
+    });
+
+    // Sold 6 shares at ~0.99 => 5.94 USDC.
+    closeTradeRoundWithTakeProfit(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      exitAtMs: now + 120_000,
+      exitPrice: 0.99,
+      exitUsd: 5.94,
+      shares: 6,
+      exitOrderId: "tp-1",
+    });
+
+    const row = getTradeRound(db, "m1", "UP");
+    expect(row?.exit_type).toBe("take_profit");
+    expect(row?.stop_triggered).toBe(0);
+    expect(row?.exit_price).toBe(0.99);
+    expect(row?.exit_usd).toBe(5.94);
+    expect(row?.exit_order_id).toBe("tp-1");
+    expect(row?.pnl_usd).toBeCloseTo(3.96, 5);
     db.close();
   });
 

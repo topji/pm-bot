@@ -217,3 +217,72 @@ misleading.
 ### Verification
 - `npm test` — 39/39 pass (incl. 3 new bot tests).
 - `npm run typecheck` and `npm run lint` — clean.
+
+---
+
+## 2026-06-30 — Add take-profit at 98¢ (exit before expiry instead of holding to redeem)
+
+### Why
+Winners previously held to expiry and relied on auto-redeem for the $1 payout.
+Adding a take-profit means winners exit at ~98¢ and losers exit at 15¢, so
+almost nothing reaches expiry — reducing dependence on the resolution/redeem
+path (which the resolution bookkeeping still covers as a fallback).
+
+### Design
+Reuses the existing best-bid exit machinery (the stop-loss monitor) and makes it
+symmetric — **one** monitor, **one** seller, so a position can never be
+double-sold:
+- best bid **≥ takeProfitPrice (0.98)** → FAK market-sell full position (take profit)
+- best bid **≤ stopPrice (0.15)** → FAK market-sell full position (stop loss, unchanged)
+
+(Rejected the alternative of a resting limit-sell at 0.98: it races with the
+stop monitor over the same shares and risks overselling. Not worth ~1-2¢ of
+saved slippage.)
+
+### Changes
+
+1. **`src/config.ts`** — added `stopPrice` (env `STOP_LOSS_PRICE`, default 0.15)
+   and `takeProfitPrice` (env `TAKE_PROFIT_PRICE`, default 0.98). A `.refine`
+   rejects config where `takeProfitPrice <= stopPrice`. Defaults preserve prior
+   stop behavior; nothing changes unless the envs are set.
+2. **`src/polymarket/stopMonitor.ts`** — `runStopLossModeAOnce` →
+   `runExitCheckOnce`; `StopMonitorConfig`/`StopOutcome` → `ExitCheckConfig`/
+   `ExitOutcome`. Added `takeProfitPrice`; the outcome now reports which
+   threshold fired (`trigger: 'stop' | 'take_profit'`, status `'exited'`).
+   Realized-price reporting (taking/making) unchanged.
+3. **`src/polymarket/stopLossSupervisor.ts`** — passes both thresholds from
+   config; labels the exit by trigger: `market_state.status` `'tookProfit'` vs
+   `'stopped'`, trade action `'take_profit_exit'` vs `'stop_exit'`, and closes
+   the round via the matching helper. The skip-when-expired guard is unchanged.
+4. **`src/state/tradeRounds.ts`** — added `'take_profit'` to `ExitType` and
+   `closeTradeRoundWithTakeProfit` (exit_type `take_profit`, `stop_triggered=0`,
+   P&L computed like the stop close).
+5. **`src/state/trades.ts`** — added `'take_profit_exit'` to `TradeAction`.
+6. **`src/analytics/queries.ts`** — added `tookProfitRounds` to the summary
+   (wins/losses still derived from P&L sign, so totals stay correct).
+7. **`src/bot.ts`** — entry now records `config.stopPrice` in `market_state`
+   instead of a hardcoded 0.15.
+8. **`src/cli.ts`** — `stop-test` command updated to `runExitCheckOnce` with
+   both thresholds.
+9. **`.env.example`** — documents `STOP_LOSS_PRICE` / `TAKE_PROFIT_PRICE`.
+
+### Tests
+- `stopMonitor.test.ts` — take-profit fires at ≥0.98 (realized price reported);
+  does NOT fire at 0.97; stop still fires at ≤0.15; no-trigger between thresholds
+  and on lowball bids.
+- `tradeRounds.test.ts` — take-profit round records profit, `exit_type`, and
+  `stop_triggered=0`.
+- `config.test.ts` — threshold defaults; rejects `takeProfitPrice <= stopPrice`.
+
+### Not changed
+Entry logic, the 30s entry-cancel, the expired-market skip, and the gas-free
+resolution bookkeeping (now the fallback for any position that hits neither
+threshold before expiry).
+
+### No DB migration
+No schema change — `market_state.stop_price` already exists and thresholds live
+in config; `exit_type='take_profit'` is just a new value in an existing column.
+
+### Verification
+- `npm test` — 44/44 pass.
+- `npm run typecheck` and `npm run lint` — clean.

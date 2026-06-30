@@ -219,7 +219,7 @@ async function botTick(params: {
           order_type: res.orderType,
           entry_price: params.config.entryPrice,
           entry_shares: params.config.usdPerTrade / params.config.entryPrice,
-          stop_price: 0.15,
+          stop_price: params.config.stopPrice,
           updated_at_ms: nowMs,
         });
 

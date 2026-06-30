@@ -43,6 +43,12 @@ const ConfigSchema = z.object({
   // Stop monitor — polls best bid while positions are open (default 1s)
   stopPollMs: z.coerce.number().int().positive().default(1_000),
 
+  // Exit thresholds (best-bid based). The monitor sells the full position when
+  // the best bid drops to <= stopPrice (stop loss) or rises to >= takeProfitPrice
+  // (take profit). takeProfitPrice must be above stopPrice (validated below).
+  stopPrice: z.coerce.number().positive().max(1).default(0.15),
+  takeProfitPrice: z.coerce.number().positive().max(1).default(0.98),
+
   dbPath: z.string().default("./data/bot.sqlite"),
 
   // Polygon RPC for on-chain reads/writes used by redeem.
@@ -50,6 +56,9 @@ const ConfigSchema = z.object({
 
   // Ops — do not use z.coerce.boolean(); the string "false" coerces to true in Zod.
   killSwitch: z.preprocess(parseEnvBoolean, z.boolean()).default(false),
+}).refine((c) => c.takeProfitPrice > c.stopPrice, {
+  message: "takeProfitPrice must be greater than stopPrice",
+  path: ["takeProfitPrice"],
 });
 
 export type BotConfig = z.infer<typeof ConfigSchema>;
@@ -72,6 +81,8 @@ export function loadConfig(): BotConfig {
     scanIntervalMs: process.env.SCAN_INTERVAL_MS,
     reconcileIntervalMs: process.env.RECONCILE_INTERVAL_MS,
     stopPollMs: process.env.STOP_POLL_MS,
+    stopPrice: process.env.STOP_LOSS_PRICE,
+    takeProfitPrice: process.env.TAKE_PROFIT_PRICE,
     dbPath: process.env.DB_PATH,
     polygonRpcUrl: process.env.POLYGON_RPC_URL,
     killSwitch: process.env.KILL_SWITCH,

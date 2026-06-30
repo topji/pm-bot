@@ -53,6 +53,44 @@ describe("loadConfig", () => {
     else delete process.env.ORDER_SIDE;
   });
 
+  it("defaults exit thresholds to stop 0.15 / take-profit 0.98", () => {
+    const oldKey = process.env.BOT_PRIVATE_KEY;
+    const oldStop = process.env.STOP_LOSS_PRICE;
+    const oldTp = process.env.TAKE_PROFIT_PRICE;
+
+    process.env.BOT_PRIVATE_KEY = TEST_KEY;
+    delete process.env.STOP_LOSS_PRICE;
+    delete process.env.TAKE_PROFIT_PRICE;
+
+    const cfg = loadConfig();
+    expect(cfg.stopPrice).toBe(0.15);
+    expect(cfg.takeProfitPrice).toBe(0.98);
+
+    if (oldKey) process.env.BOT_PRIVATE_KEY = oldKey;
+    else delete process.env.BOT_PRIVATE_KEY;
+    if (oldStop) process.env.STOP_LOSS_PRICE = oldStop;
+    if (oldTp) process.env.TAKE_PROFIT_PRICE = oldTp;
+  });
+
+  it("rejects a take-profit price that is not above the stop price", () => {
+    const oldKey = process.env.BOT_PRIVATE_KEY;
+    const oldStop = process.env.STOP_LOSS_PRICE;
+    const oldTp = process.env.TAKE_PROFIT_PRICE;
+
+    process.env.BOT_PRIVATE_KEY = TEST_KEY;
+    process.env.STOP_LOSS_PRICE = "0.15";
+    process.env.TAKE_PROFIT_PRICE = "0.10"; // below the stop — invalid
+
+    expect(() => loadConfig()).toThrow(/Invalid configuration/i);
+
+    if (oldKey) process.env.BOT_PRIVATE_KEY = oldKey;
+    else delete process.env.BOT_PRIVATE_KEY;
+    if (oldStop) process.env.STOP_LOSS_PRICE = oldStop;
+    else delete process.env.STOP_LOSS_PRICE;
+    if (oldTp) process.env.TAKE_PROFIT_PRICE = oldTp;
+    else delete process.env.TAKE_PROFIT_PRICE;
+  });
+
   it("parses KILL_SWITCH=false as false (not Zod coerce truthy string)", () => {
     const oldKey = process.env.BOT_PRIVATE_KEY;
     const oldKill = process.env.KILL_SWITCH;

@@ -9,9 +9,9 @@ import type { DataApiPosition } from "./types.js";
 import type { OrderSide } from "./types.js";
 import { outcomeTokenIdFromRow } from "./types.js";
 import { fetchPositionsForUser } from "./dataApi.js";
-import { runStopLossModeAOnce } from "./stopMonitor.js";
+import { runExitCheckOnce } from "./stopMonitor.js";
 import { recordTrade } from "../state/trades.js";
-import { closeTradeRoundWithStop } from "../state/tradeRounds.js";
+import { closeTradeRoundWithStop, closeTradeRoundWithTakeProfit } from "../state/tradeRounds.js";
 
 type MarketRow = {
   market_id: string;
@@ -57,6 +57,8 @@ async function handleStopForPosition(params: {
   pos: DataApiPosition;
   nowMs: number;
   stopPollMs: number;
+  stopPrice: number;
+  takeProfitPrice: number;
 }): Promise<void> {
   if (!params.pos.asset || !params.pos.size || params.pos.size <= 0) return;
   if (!positionMatchesOrderSide(params.db, params.pos.asset, params.orderSide)) return;
@@ -64,13 +66,13 @@ async function handleStopForPosition(params: {
   const m = findMarketByTokenId(params.db, params.pos.asset);
   if (!m) return;
 
-  // Stop-loss only applies while the market is live. Once it's at/past expiry,
+  // Exit checks only apply while the market is live. Once it's at/past expiry,
   // the position holds to resolution and is auto-redeemed — and the CLOB /book
   // 404s for resolved markets, so polling it is pointless noise. Skip.
   const endMs = Date.parse(m.end_date);
   if (Number.isFinite(endMs) && params.nowMs >= endMs) return;
 
-  const out = await runStopLossModeAOnce(
+  const out = await runExitCheckOnce(
     {
       endpoints: params.endpoints,
       client: params.clob,
@@ -78,22 +80,26 @@ async function handleStopForPosition(params: {
       shares: params.pos.size,
       tickSize: m.tick_size,
       negRisk: Boolean(params.pos.negativeRisk ?? m.neg_risk),
-      stopPrice: 0.15,
+      stopPrice: params.stopPrice,
+      takeProfitPrice: params.takeProfitPrice,
       pollMs: params.stopPollMs,
       maxExitRetries: 3,
     },
     params.nowMs,
   );
 
-  if (out.status !== "stopped") return;
+  if (out.status !== "exited") return;
+
+  const isTakeProfit = out.trigger === "take_profit";
+  const newStatus = isTakeProfit ? "tookProfit" : "stopped";
 
   params.db
     .prepare(
       `
       INSERT INTO market_state (market_id, order_side, status, stop_order_id, updated_at_ms)
-      VALUES (@market_id, @order_side, 'stopped', @stop_order_id, @updated_at_ms)
+      VALUES (@market_id, @order_side, @status, @stop_order_id, @updated_at_ms)
       ON CONFLICT(market_id, order_side) DO UPDATE SET
-        status='stopped',
+        status=excluded.status,
         stop_order_id=excluded.stop_order_id,
         updated_at_ms=excluded.updated_at_ms
     `,
@@ -101,18 +107,22 @@ async function handleStopForPosition(params: {
     .run({
       market_id: m.market_id,
       order_side: params.orderSide,
+      status: newStatus,
       stop_order_id: out.orderId,
       updated_at_ms: params.nowMs,
     });
 
-  params.log.warn({ market: m.slug, orderId: out.orderId }, "stop-loss executed");
+  params.log.warn(
+    { market: m.slug, orderId: out.orderId, trigger: out.trigger, exitPrice: out.exitPrice },
+    isTakeProfit ? "take-profit executed" : "stop-loss executed",
+  );
 
   const exitUsd = Number(out.filledUsd);
   recordTrade(params.db, {
     tradeKey: `bot:order:${out.orderId}`,
     marketId: m.market_id,
     slug: m.slug,
-    action: "stop_exit",
+    action: isTakeProfit ? "take_profit_exit" : "stop_exit",
     side: "sell",
     tokenId: params.pos.asset,
     price: out.exitPrice,
@@ -127,7 +137,7 @@ async function handleStopForPosition(params: {
     createdAtMs: params.nowMs,
   });
 
-  closeTradeRoundWithStop(params.db, {
+  const closeArgs = {
     marketId: m.market_id,
     orderSide: params.orderSide,
     exitAtMs: params.nowMs,
@@ -135,10 +145,15 @@ async function handleStopForPosition(params: {
     exitUsd: Number.isFinite(exitUsd) ? exitUsd : 0,
     shares: out.shares,
     exitOrderId: out.orderId,
-  });
+  };
+  if (isTakeProfit) {
+    closeTradeRoundWithTakeProfit(params.db, closeArgs);
+  } else {
+    closeTradeRoundWithStop(params.db, closeArgs);
+  }
 }
 
-/** Polls open positions and runs stop-loss checks every `stopPollMs` (default 1s). */
+/** Polls open positions every `stopPollMs` and runs exit checks (stop loss + take profit). */
 export async function runStopLossSupervisor(params: {
   config: BotConfig;
   log: pino.Logger;
@@ -166,6 +181,8 @@ export async function runStopLossSupervisor(params: {
               pos,
               nowMs: loopStartMs,
               stopPollMs: params.config.stopPollMs,
+              stopPrice: params.config.stopPrice,
+              takeProfitPrice: params.config.takeProfitPrice,
             }).catch((err) => {
               params.log.warn({ err, asset: pos.asset }, "stop-loss check failed");
             }),

@@ -4,7 +4,7 @@ import { discoverBtc5mUpDownMarkets } from "./polymarket/gamma.js";
 import { createBotWallets } from "./polymarket/wallets.js";
 import { deriveDepositWalletForBot } from "./polymarket/wallets.js";
 import { buildCtfRedeemCalldata } from "./polymarket/redeem.js";
-import { runStopLossModeAOnce } from "./polymarket/stopMonitor.js";
+import { runExitCheckOnce } from "./polymarket/stopMonitor.js";
 import { loadOrCreateClobCreds, createDepositWalletClobClient } from "./polymarket/clob.js";
 
 type Command = "scan" | "redeem-calldata" | "stop-test" | "derive-deposit-wallet";
@@ -101,7 +101,7 @@ async function main(): Promise<void> {
       depositWalletAddress: depositWallet,
     });
 
-    const out = await runStopLossModeAOnce(
+    const out = await runExitCheckOnce(
       {
         endpoints,
         client: clob,
@@ -109,13 +109,14 @@ async function main(): Promise<void> {
         shares,
         tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
         negRisk,
-        stopPrice: 0.15,
+        stopPrice: config.stopPrice,
+        takeProfitPrice: config.takeProfitPrice,
         pollMs: config.stopPollMs,
         maxExitRetries: 3,
       },
       Date.now(),
     );
-    log.info({ out }, "stop-test result");
+    log.info({ out }, "exit-check result");
     return;
   }
 

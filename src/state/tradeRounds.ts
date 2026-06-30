@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 
 import type { OrderSide } from "../polymarket/types.js";
 
-export type ExitType = "stop" | "redeem" | "cancelled";
+export type ExitType = "stop" | "take_profit" | "redeem" | "cancelled";
 
 export type TradeRoundRow = {
   market_id: string;
@@ -131,6 +131,53 @@ export function closeTradeRoundWithStop(
       filled = 1,
       stop_triggered = 1,
       exit_type = 'stop',
+      exit_at_ms = @exit_at_ms,
+      exit_price = @exit_price,
+      exit_usd = @exit_usd,
+      shares = @shares,
+      exit_order_id = @exit_order_id,
+      pnl_usd = @pnl_usd,
+      updated_at_ms = @updated_at_ms
+    WHERE market_id = @market_id AND order_side = @order_side
+  `,
+  ).run({
+    market_id: params.marketId,
+    order_side: params.orderSide,
+    exit_at_ms: params.exitAtMs,
+    exit_price: params.exitPrice,
+    exit_usd: params.exitUsd,
+    shares: params.shares,
+    exit_order_id: params.exitOrderId,
+    pnl_usd: pnl,
+    updated_at_ms: params.exitAtMs,
+  });
+}
+
+export function closeTradeRoundWithTakeProfit(
+  db: Database.Database,
+  params: {
+    marketId: string;
+    orderSide: OrderSide;
+    exitAtMs: number;
+    exitPrice: number;
+    exitUsd: number;
+    shares: number;
+    exitOrderId: string;
+  },
+): void {
+  const row = db
+    .prepare(`SELECT entry_usd, filled FROM trade_rounds WHERE market_id = ? AND order_side = ?`)
+    .get(params.marketId, params.orderSide) as { entry_usd: number | null; filled: number } | undefined;
+
+  const entryUsd = row?.entry_usd ?? null;
+  const pnl = row?.filled ? computePnl(entryUsd, params.exitUsd) : null;
+
+  db.prepare(
+    `
+    UPDATE trade_rounds SET
+      filled = 1,
+      stop_triggered = 0,
+      exit_type = 'take_profit',
       exit_at_ms = @exit_at_ms,
       exit_price = @exit_price,
       exit_usd = @exit_usd,

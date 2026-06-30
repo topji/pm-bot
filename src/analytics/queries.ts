@@ -18,6 +18,7 @@ export type AnalyticsSummary = {
   fillRate: number | null;
   openRounds: number;
   stoppedRounds: number;
+  tookProfitRounds: number;
   redeemedRounds: number;
   cancelledRounds: number;
   closedWithPnl: number;
@@ -109,6 +110,7 @@ export function getAnalyticsSummary(
         SUM(CASE WHEN filled = 1 THEN 1 ELSE 0 END) AS filled_rounds,
         SUM(CASE WHEN exit_at_ms IS NULL THEN 1 ELSE 0 END) AS open_rounds,
         SUM(CASE WHEN exit_type = 'stop' THEN 1 ELSE 0 END) AS stopped_rounds,
+        SUM(CASE WHEN exit_type = 'take_profit' THEN 1 ELSE 0 END) AS took_profit_rounds,
         SUM(CASE WHEN exit_type = 'redeem' THEN 1 ELSE 0 END) AS redeemed_rounds,
         SUM(CASE WHEN exit_type = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_rounds,
         SUM(CASE WHEN pnl_usd IS NOT NULL THEN 1 ELSE 0 END) AS closed_with_pnl,
@@ -125,6 +127,7 @@ export function getAnalyticsSummary(
     filled_rounds: number;
     open_rounds: number;
     stopped_rounds: number;
+    took_profit_rounds: number;
     redeemed_rounds: number;
     cancelled_rounds: number;
     closed_with_pnl: number;
@@ -144,6 +147,7 @@ export function getAnalyticsSummary(
     fillRate: agg.total_rounds > 0 ? filled / agg.total_rounds : null,
     openRounds: agg.open_rounds ?? 0,
     stoppedRounds: agg.stopped_rounds ?? 0,
+    tookProfitRounds: agg.took_profit_rounds ?? 0,
     redeemedRounds: agg.redeemed_rounds ?? 0,
     cancelledRounds: agg.cancelled_rounds ?? 0,
     closedWithPnl: closed,

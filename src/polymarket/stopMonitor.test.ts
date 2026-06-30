@@ -1,115 +1,107 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ClobClient } from "@polymarket/clob-client-v2";
 
-import { runStopLossModeAOnce } from "./stopMonitor.js";
+import { runExitCheckOnce } from "./stopMonitor.js";
 
-describe("runStopLossModeAOnce", () => {
-  it("does not trigger when best bid above stop", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ bids: [{ price: "0.20", size: "10" }], asks: [] }), {
-        status: 200,
-      }),
-    );
+const endpoints = { gammaBaseUrl: "https://x", clobHost: "https://x", dataApiUrl: "https://x" };
 
-    const client = {
-      createAndPostMarketOrder: vi.fn(),
-    } as unknown as ClobClient;
+function baseCfg(client: ClobClient, shares = 6) {
+  return {
+    endpoints,
+    client,
+    tokenId: "123",
+    shares,
+    tickSize: "0.01" as const,
+    negRisk: false,
+    stopPrice: 0.15,
+    takeProfitPrice: 0.98,
+    pollMs: 500,
+    maxExitRetries: 1,
+  };
+}
 
-    const out = await runStopLossModeAOnce(
-      {
-        endpoints: { gammaBaseUrl: "https://x", clobHost: "https://x", dataApiUrl: "https://x" },
-        client,
-        tokenId: "123",
-        shares: 10,
-        tickSize: "0.01",
-        negRisk: false,
-        stopPrice: 0.15,
-        pollMs: 500,
-        maxExitRetries: 1,
-      },
-      Date.now(),
-    );
+function mockBook(bids: { price: string; size: string }[]) {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(JSON.stringify({ bids, asks: [] }), { status: 200 }));
+}
 
-    expect(out).toEqual({ status: "not_triggered" });
-    fetchMock.mockRestore();
-  });
-
-  it("does not trigger when a lowball bid sits below a healthy best bid", async () => {
-    // Polymarket bids are ascending: a 0.02 lowball is bids[0], real best is 0.33.
-    // The stop must read the best bid (0.33) and NOT fire.
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          bids: [
-            { price: "0.02", size: "5" },
-            { price: "0.33", size: "200" },
-          ],
-          asks: [],
-        }),
-        { status: 200 },
-      ),
-    );
-
+describe("runExitCheckOnce", () => {
+  it("does not trigger when best bid is between the stop and take-profit thresholds", async () => {
+    const fetchMock = mockBook([{ price: "0.20", size: "10" }]);
     const createAndPostMarketOrder = vi.fn();
     const client = { createAndPostMarketOrder } as unknown as ClobClient;
 
-    const out = await runStopLossModeAOnce(
-      {
-        endpoints: { gammaBaseUrl: "https://x", clobHost: "https://x", dataApiUrl: "https://x" },
-        client,
-        tokenId: "123",
-        shares: 6,
-        tickSize: "0.01",
-        negRisk: false,
-        stopPrice: 0.15,
-        pollMs: 500,
-        maxExitRetries: 1,
-      },
-      Date.now(),
-    );
+    const out = await runExitCheckOnce(baseCfg(client, 10), Date.now());
 
     expect(out).toEqual({ status: "not_triggered" });
     expect(createAndPostMarketOrder).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });
 
-  it("reports the realized fill price, not the protective limit cap", async () => {
-    // Best bid 0.14 -> stop triggers. FAK sweeps and fills 6 shares for 0.84 USDC
-    // (0.14/share), well above limitPrice (~tick). exitPrice must reflect 0.14.
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ bids: [{ price: "0.14", size: "100" }], asks: [] }), {
-        status: 200,
-      }),
-    );
+  it("does not trigger when a lowball bid sits below a healthy best bid", async () => {
+    // Polymarket bids are ascending: a 0.02 lowball is bids[0], real best is 0.33.
+    const fetchMock = mockBook([
+      { price: "0.02", size: "5" },
+      { price: "0.33", size: "200" },
+    ]);
+    const createAndPostMarketOrder = vi.fn();
+    const client = { createAndPostMarketOrder } as unknown as ClobClient;
 
+    const out = await runExitCheckOnce(baseCfg(client), Date.now());
+
+    expect(out).toEqual({ status: "not_triggered" });
+    expect(createAndPostMarketOrder).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("stops out and reports the realized fill price, not the protective limit cap", async () => {
+    // Best bid 0.14 -> stop triggers. FAK fills 6 shares for 0.84 USDC (0.14/share).
+    const fetchMock = mockBook([{ price: "0.14", size: "100" }]);
     const client = {
-      createAndPostMarketOrder: vi.fn().mockResolvedValue({
-        orderID: "stop-1",
-        makingAmount: "6",
-        takingAmount: "0.84",
-      }),
+      createAndPostMarketOrder: vi
+        .fn()
+        .mockResolvedValue({ orderID: "stop-1", makingAmount: "6", takingAmount: "0.84" }),
     } as unknown as ClobClient;
 
-    const out = await runStopLossModeAOnce(
-      {
-        endpoints: { gammaBaseUrl: "https://x", clobHost: "https://x", dataApiUrl: "https://x" },
-        client,
-        tokenId: "123",
-        shares: 6,
-        tickSize: "0.01",
-        negRisk: false,
-        stopPrice: 0.15,
-        pollMs: 500,
-        maxExitRetries: 1,
-      },
-      Date.now(),
-    );
+    const out = await runExitCheckOnce(baseCfg(client), Date.now());
 
-    expect(out.status).toBe("stopped");
-    if (out.status === "stopped") {
+    expect(out.status).toBe("exited");
+    if (out.status === "exited") {
+      expect(out.trigger).toBe("stop");
       expect(out.exitPrice).toBeCloseTo(0.14, 6);
     }
     fetchMock.mockRestore();
   });
-});
 
+  it("takes profit when best bid reaches the take-profit threshold", async () => {
+    // Best bid 0.99 (>= 0.98) -> take profit. FAK fills 6 shares for 5.94 USDC.
+    const fetchMock = mockBook([{ price: "0.99", size: "100" }]);
+    const client = {
+      createAndPostMarketOrder: vi
+        .fn()
+        .mockResolvedValue({ orderID: "tp-1", makingAmount: "6", takingAmount: "5.94" }),
+    } as unknown as ClobClient;
+
+    const out = await runExitCheckOnce(baseCfg(client), Date.now());
+
+    expect(out.status).toBe("exited");
+    if (out.status === "exited") {
+      expect(out.trigger).toBe("take_profit");
+      expect(out.exitPrice).toBeCloseTo(0.99, 6);
+    }
+    fetchMock.mockRestore();
+  });
+
+  it("does not take profit just below the threshold (0.97 < 0.98)", async () => {
+    const fetchMock = mockBook([{ price: "0.97", size: "100" }]);
+    const createAndPostMarketOrder = vi.fn();
+    const client = { createAndPostMarketOrder } as unknown as ClobClient;
+
+    const out = await runExitCheckOnce(baseCfg(client), Date.now());
+
+    expect(out).toEqual({ status: "not_triggered" });
+    expect(createAndPostMarketOrder).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+});

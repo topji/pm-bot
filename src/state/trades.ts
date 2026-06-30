@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 
-export type TradeAction = "entry" | "stop_exit" | "redeem" | "fill";
+export type TradeAction = "entry" | "stop_exit" | "take_profit_exit" | "redeem" | "fill";
 export type TradeSource = "bot" | "data_api";
 
 export type TradeInsert = {
