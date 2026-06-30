@@ -197,6 +197,57 @@ export function closeTradeRoundWithRedeem(
   });
 }
 
+/**
+ * Close a round at market resolution WITHOUT any on-chain redeem.
+ *
+ * Polymarket auto-redeems winning positions for this account, so the bot never
+ * sends a redeem transaction; it only records the resolved outcome for P&L.
+ * `won` decides the payout: winning side settles at $1/share, losing side at $0.
+ * The `exit_at_ms IS NULL` guard makes this idempotent across scan ticks.
+ */
+export function closeTradeRoundAtResolution(
+  db: Database.Database,
+  params: {
+    marketId: string;
+    orderSide: OrderSide;
+    exitAtMs: number;
+    shares: number;
+    won: boolean;
+  },
+): void {
+  const row = db
+    .prepare(`SELECT entry_usd, filled FROM trade_rounds WHERE market_id = ? AND order_side = ?`)
+    .get(params.marketId, params.orderSide) as { entry_usd: number | null; filled: number } | undefined;
+
+  const exitUsd = params.won ? params.shares : 0;
+  const pnl = row?.filled ? computePnl(row.entry_usd, exitUsd) : null;
+
+  db.prepare(
+    `
+    UPDATE trade_rounds SET
+      filled = 1,
+      stop_triggered = 0,
+      exit_type = 'redeem',
+      exit_at_ms = @exit_at_ms,
+      exit_price = @exit_price,
+      exit_usd = @exit_usd,
+      shares = @shares,
+      pnl_usd = @pnl_usd,
+      updated_at_ms = @updated_at_ms
+    WHERE market_id = @market_id AND order_side = @order_side AND exit_at_ms IS NULL
+  `,
+  ).run({
+    market_id: params.marketId,
+    order_side: params.orderSide,
+    exit_at_ms: params.exitAtMs,
+    exit_price: params.won ? 1.0 : 0.0,
+    exit_usd: exitUsd,
+    shares: params.shares,
+    pnl_usd: pnl,
+    updated_at_ms: params.exitAtMs,
+  });
+}
+
 export function markTradeRoundEntryCancelled(
   db: Database.Database,
   params: {

@@ -14,11 +14,10 @@ import { canPlaceEntryNow, placeExactEntryAtPrice, secondsToExpiry } from "./pol
 import { cancelEntryOrdersNearExpiry, hasEntryForMarket } from "./polymarket/entryOrders.js";
 import { fetchPositionsForUser } from "./polymarket/dataApi.js";
 import { runStopLossSupervisor } from "./polymarket/stopLossSupervisor.js";
-import { redeemResolvedPosition } from "./polymarket/redeem.js";
 import { recordTrade } from "./state/trades.js";
 import { shouldSyncTrades, syncTradesFromDataApi } from "./polymarket/tradesSync.js";
 import {
-  closeTradeRoundWithRedeem,
+  closeTradeRoundAtResolution,
   getTradeRound,
   markEntryFilled,
   openTradeRound,
@@ -86,7 +85,6 @@ export async function runBot(params: { config: BotConfig; log: pino.Logger; db: 
         endpoints,
         clob,
         depositWalletAddress,
-        wallets,
       });
     } catch (err) {
       params.log.error({ err }, "bot tick failed");
@@ -105,7 +103,6 @@ async function botTick(params: {
   endpoints: Endpoints;
   clob: ClobClient;
   depositWalletAddress: Address;
-  wallets: ReturnType<typeof createBotWallets>;
 }): Promise<void> {
   const nowMs = Date.now();
 
@@ -275,71 +272,62 @@ async function botTick(params: {
     }
   }
 
-  // Redeem when redeemable
+  // Resolution bookkeeping (gas-free). Polymarket auto-redeems winning positions
+  // on-chain for this account, so the bot sends NO redeem transactions. We only
+  // record the resolved outcome locally for P&L. Idempotent across ticks: the
+  // round close, market_state upsert, and trade row all no-op once applied.
   for (const pos of positions) {
     if (!pos.redeemable) continue;
-    if (!pos.conditionId) continue;
+    if (!pos.asset) continue;
     if (!positionMatchesOrderSide(params.db, pos.asset, orderSide)) continue;
-    const m = findMarketByConditionId(params.db, pos.conditionId);
+    const m = findMarketByTokenId(params.db, pos.asset);
     if (!m) continue;
 
-    const txHash = await redeemResolvedPosition({
-      walletClient: params.wallets.walletClient,
-      publicClient: params.wallets.publicClient,
-      depositWalletAddress: params.depositWalletAddress,
-      market: {
-        id: m.market_id,
-        slug: m.slug,
-        question: m.question,
-        endDate: m.end_date,
-        active: true,
-        closed: false,
-        negRisk: Boolean(m.neg_risk),
-        tickSize: m.tick_size,
-        conditionId: m.condition_id,
-        upTokenId: m.up_token_id,
-        downTokenId: m.down_token_id,
-      },
+    const round = getTradeRound(params.db, m.market_id, orderSide);
+    if (!round || round.exit_at_ms !== null) continue; // already closed or never entered
+
+    const shares = pos.size ?? round.shares ?? 0;
+    if (shares <= 0) continue;
+
+    // Resolved price settles near $1 on the winning side and near $0 on the losing side.
+    const won = (pos.curPrice ?? 0) >= 0.5;
+
+    closeTradeRoundAtResolution(params.db, {
+      marketId: m.market_id,
+      orderSide,
+      exitAtMs: nowMs,
+      shares,
+      won,
     });
 
     params.db
       .prepare(
         `
-        INSERT INTO market_state (market_id, order_side, status, redeemed_tx_hash, updated_at_ms)
-        VALUES (@market_id, @order_side, 'redeemed', @tx, @updated_at_ms)
+        INSERT INTO market_state (market_id, order_side, status, updated_at_ms)
+        VALUES (@market_id, @order_side, 'redeemed', @updated_at_ms)
         ON CONFLICT(market_id, order_side) DO UPDATE SET
           status='redeemed',
-          redeemed_tx_hash=excluded.redeemed_tx_hash,
           updated_at_ms=excluded.updated_at_ms
       `,
       )
-      .run({ market_id: m.market_id, order_side: orderSide, tx: txHash, updated_at_ms: nowMs });
+      .run({ market_id: m.market_id, order_side: orderSide, updated_at_ms: nowMs });
 
-    params.log.info({ market: m.slug, txHash, orderSide }, "redeem submitted");
-
-    const heldTokenId = outcomeTokenIdFromRow(m, orderSide);
-    const round = getTradeRound(params.db, m.market_id, orderSide);
-    const redeemShares =
-      positions.find((p) => p.asset === heldTokenId)?.size ?? round?.shares ?? 0;
-    if (redeemShares > 0) {
-      closeTradeRoundWithRedeem(params.db, {
-        marketId: m.market_id,
-        orderSide,
-        exitAtMs: nowMs,
-        shares: redeemShares,
-        redeemTxHash: txHash,
-      });
-    }
+    params.log.info(
+      { market: m.slug, won, shares, orderSide },
+      "trade resolved (auto-redeemed by Polymarket)",
+    );
 
     recordTrade(params.db, {
-      tradeKey: `bot:tx:${txHash}`,
+      tradeKey: `bot:resolve:${m.market_id}:${orderSide}`,
       marketId: m.market_id,
       slug: m.slug,
       action: "redeem",
       side: null,
-      tokenId: outcomeTokenIdFromRow(m, orderSide),
-      txHash,
-      status: "submitted",
+      tokenId: pos.asset,
+      price: won ? 1 : 0,
+      shares,
+      usdAmount: won ? shares : 0,
+      status: won ? "auto_redeemed_win" : "resolved_loss",
       source: "bot",
       createdAtMs: nowMs,
     });
@@ -443,17 +431,4 @@ function findMarketByTokenId(db: Database.Database, tokenId: string): MarketRow 
   return row ?? null;
 }
 
-function findMarketByConditionId(db: Database.Database, conditionId: string): MarketRow | null {
-  const row = db
-    .prepare(
-      `
-      SELECT market_id, slug, question, end_date, condition_id, neg_risk, tick_size, up_token_id, down_token_id
-      FROM markets
-      WHERE condition_id = ?
-      LIMIT 1
-    `,
-    )
-    .get(conditionId) as MarketRow | undefined;
-  return row ?? null;
-}
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import Database from "better-sqlite3";
 
 import {
+  closeTradeRoundAtResolution,
   closeTradeRoundWithRedeem,
   closeTradeRoundWithStop,
   getTradeRound,
@@ -145,6 +146,94 @@ describe("tradeRounds", () => {
     expect(row?.stop_triggered).toBe(0);
     expect(row?.exit_usd).toBe(3.33);
     expect(row?.pnl_usd).toBeCloseTo(2.33, 5);
+    db.close();
+  });
+
+  it("closeTradeRoundAtResolution settles a win at $1/share without a tx", () => {
+    const db = openTestDb();
+    const now = Date.now();
+
+    openTradeRound(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      slug: "btc-updown-5m-test",
+      entryPlacedAtMs: now,
+      secondsToExpiryAtEntry: 180,
+      entryOrderId: "ord-entry",
+      intendedEntryPrice: 0.33,
+      intendedEntryUsd: 1,
+    });
+    markEntryFilled(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      entryFilledAtMs: now + 500,
+      entryPrice: 0.33,
+      shares: 3,
+      entryUsd: 0.99,
+    });
+
+    closeTradeRoundAtResolution(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      exitAtMs: now + 300_000,
+      shares: 3,
+      won: true,
+    });
+
+    const row = getTradeRound(db, "m1", "UP");
+    expect(row?.exit_type).toBe("redeem");
+    expect(row?.redeem_tx_hash).toBeNull(); // gas-free: no tx recorded
+    expect(row?.exit_price).toBe(1);
+    expect(row?.exit_usd).toBe(3);
+    expect(row?.pnl_usd).toBeCloseTo(2.01, 5);
+    db.close();
+  });
+
+  it("closeTradeRoundAtResolution settles a loss at $0 and is idempotent", () => {
+    const db = openTestDb();
+    const now = Date.now();
+
+    openTradeRound(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      slug: "btc-updown-5m-test",
+      entryPlacedAtMs: now,
+      secondsToExpiryAtEntry: 180,
+      entryOrderId: "ord-entry",
+      intendedEntryPrice: 0.33,
+      intendedEntryUsd: 1,
+    });
+    markEntryFilled(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      entryFilledAtMs: now + 500,
+      entryPrice: 0.33,
+      shares: 3,
+      entryUsd: 0.99,
+    });
+
+    closeTradeRoundAtResolution(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      exitAtMs: now + 300_000,
+      shares: 3,
+      won: false,
+    });
+    // Second call must NOT overwrite the already-closed round (idempotent).
+    closeTradeRoundAtResolution(db, {
+      marketId: "m1",
+      orderSide: "UP",
+      exitAtMs: now + 600_000,
+      shares: 3,
+      won: true,
+    });
+
+    const row = getTradeRound(db, "m1", "UP");
+    expect(row?.exit_type).toBe("redeem");
+    expect(row?.exit_price).toBe(0);
+    expect(row?.exit_usd).toBe(0);
+    expect(row?.exit_at_ms).toBe(now + 300_000); // unchanged by the 2nd call
+    expect(row?.pnl_usd).toBeCloseTo(-0.99, 5);
     db.close();
   });
 });

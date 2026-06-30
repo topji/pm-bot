@@ -50,9 +50,8 @@ describe("runStopLossModeAOnce", () => {
       ),
     );
 
-    const client = {
-      createAndPostMarketOrder: vi.fn(),
-    } as unknown as ClobClient;
+    const createAndPostMarketOrder = vi.fn();
+    const client = { createAndPostMarketOrder } as unknown as ClobClient;
 
     const out = await runStopLossModeAOnce(
       {
@@ -70,7 +69,7 @@ describe("runStopLossModeAOnce", () => {
     );
 
     expect(out).toEqual({ status: "not_triggered" });
-    expect(client.createAndPostMarketOrder).not.toHaveBeenCalled();
+    expect(createAndPostMarketOrder).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });
 

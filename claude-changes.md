@@ -66,3 +66,56 @@ falls to the stop.
 - No live trades were placed during verification.
 - Pre-existing uncommitted changes in `entryOrders.ts` / `entryOrders.test.ts`
   (open-orders fetch hardening) are unrelated to this fix and were left as-is.
+
+---
+
+## 2026-06-30 — Remove in-bot on-chain redeem; replace with gas-free resolution bookkeeping
+
+### Why
+Polymarket auto-redeems winning positions on the account, so the bot's own
+on-chain redeem loop was redundant. Worse, it had no idempotency guard: it fired
+`redeemResolvedPosition` for every `redeemable` position on every scan tick
+(1s), so during the Data API's post-resolution reindex lag it could submit the
+**same redeem transaction repeatedly** — wasted gas and likely reverts. (This
+was "Issue A" from the pre-deploy review.)
+
+### Changes
+
+1. **`src/bot.ts`**
+   - Removed the on-chain redeem loop entirely: no more `redeemResolvedPosition`
+     calls, no redeem transactions, no `redeemed_tx_hash` writes from the bot.
+   - Replaced it with a **gas-free resolution-bookkeeping** pass: for each
+     `redeemable` position on our `ORDER_SIDE`, it closes the local trade round
+     for P&L only. Win/loss is read from the resolved `curPrice` (`>= 0.5` → win
+     settles at $1/share; else loss at $0). Idempotent across ticks — the round
+     close (guarded by `exit_at_ms IS NULL`), the `market_state` upsert, and the
+     `trades` row (keyed `bot:resolve:<marketId>:<side>`) all no-op once applied.
+   - Removed the now-unused `findMarketByConditionId` helper, the `wallets`
+     param from `botTick`, and the `redeemResolvedPosition` /
+     `closeTradeRoundWithRedeem` imports.
+
+2. **`src/state/tradeRounds.ts`**
+   - Added `closeTradeRoundAtResolution({ marketId, orderSide, exitAtMs, shares,
+     won })`: sets `exit_type='redeem'`, `exit_price` 1.0 (win) / 0.0 (loss),
+     `exit_usd` = shares (win) / 0 (loss), computes `pnl_usd`, and only updates
+     while `exit_at_ms IS NULL` (idempotency). No tx hash.
+   - `closeTradeRoundWithRedeem` is retained (still covered by tests) but no
+     longer called by the bot.
+
+3. **`src/polymarket/redeem.ts`** — left intact. The CLI (`src/cli.ts`) still
+   uses `buildCtfRedeemCalldata` for manual redemption, so the module stays as a
+   manual escape hatch; the bot just never calls it automatically anymore.
+
+4. **`src/state/tradeRounds.test.ts`** — new tests: win settles at $1/share with
+   `redeem_tx_hash` null (gas-free), loss settles at $0, and a second resolution
+   call does not overwrite an already-closed round (idempotent).
+
+### Accounting note
+Analytics derive win/loss from the sign of `pnl_usd`, not from `exit_type`, so a
+$0 loss recorded with `exit_type='redeem'` is still counted as a loss. Most
+losing rounds are closed earlier by the stop-loss path; this pass primarily
+records wins and any un-stopped resolutions.
+
+### Verification
+- `npm test` — 34/34 pass (incl. 3 new trade-round tests).
+- `npm run typecheck` and `npm run lint` — clean.
