@@ -156,8 +156,12 @@ async function botTick(params: {
   }
 
   // Risk controls: cap concurrent positions for this instance's outcome side.
+  // Only count positions still ACTIVE (held + not yet resolved). A redeemable
+  // position is settled: winners auto-redeem, but worthless losers ($0) are never
+  // auto-redeemed and linger in the positions API with size > 0 forever. Counting
+  // them would let a single dead loser permanently block all new entries.
   const openPosCount = positions.filter(
-    (p) => (p.size ?? 0) > 0 && positionMatchesOrderSide(params.db, p.asset, orderSide),
+    (p) => isActiveOpenPosition(p) && positionMatchesOrderSide(params.db, p.asset, orderSide),
   ).length;
   if (openPosCount >= params.config.maxConcurrentPositions) {
     params.log.info({ openPosCount, orderSide }, "maxConcurrentPositions reached; skipping entries");
@@ -392,6 +396,19 @@ function upsertMarkets(db: Database.Database, markets: GammaMarket[], nowMs: num
     }
   });
   tx(markets);
+}
+
+/**
+ * A position still actively at risk: held shares in a market that has NOT yet
+ * resolved. Resolved (`redeemable`) positions are excluded — a settled winner
+ * awaits auto-redeem and a worthless loser ($0) lingers un-redeemed forever, so
+ * neither should consume a concurrency slot.
+ */
+export function isActiveOpenPosition(pos: {
+  size?: number | undefined;
+  redeemable?: boolean | undefined;
+}): boolean {
+  return (pos.size ?? 0) > 0 && !pos.redeemable;
 }
 
 function positionMatchesOrderSide(

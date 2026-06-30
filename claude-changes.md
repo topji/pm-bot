@@ -171,3 +171,49 @@ match the instance's `BOT_PRIVATE_KEY`. Resolved by deleting the file so creds
 re-derive on startup. Not a code change. (See `loadOrCreateClobCreds` — it still
 trusts any cached creds file without verifying it matches the signer; worth
 hardening later so this can't recur silently.)
+
+---
+
+## 2026-06-30 — Don't let resolved (redeemable) positions block new entries
+
+### Symptom
+The DOWN bot stopped placing orders for ~1 hour, logging
+`maxConcurrentPositions reached; skipping entries` with `openPosCount: 1` every
+tick. It held a **losing** position (1:45–1:50 AM market) that resolved to $0 and
+showed as **Redeemable** in the wallet with size 6.1.
+
+### Root cause
+Auto-redeem only redeems *winning* positions — a worthless ($0) loser has nothing
+to pay out, so Polymarket never auto-redeems it and it lingers in the Data API
+`/positions` response with `size > 0` indefinitely. The concurrency-cap count in
+`botTick` counted **any** position with `size > 0`, including resolved/redeemable
+ones. With `MAX_CONCURRENT_POSITIONS=1` on the DOWN instance, that single dead
+loser permanently filled the only slot and blocked all new entries. (Higher caps
+just delay the same wedge as losers accumulate.)
+
+### Changes
+
+1. **`src/bot.ts`**
+   - Added `isActiveOpenPosition(pos)` — true only when shares are held AND the
+     position is not yet `redeemable` (i.e. the market hasn't resolved).
+   - The `openPosCount` concurrency-cap filter now uses it, so settled positions
+     (auto-redeemed winners and un-redeemed worthless losers alike) no longer
+     consume a slot.
+
+2. **`src/bot.test.ts`** (new) — covers the helper: live position counts,
+   redeemable win/loss excluded, zero-size excluded.
+
+### Behavior after fix
+The cap now reflects only live, at-risk positions, so a resolved loser left in
+the wallet can never wedge the bot. (Those worthless tokens stay in the wallet
+harmlessly; redeeming them would cost gas for a $0 return, so we leave them.)
+
+### Note
+The UP bot's `invalid_endDate` skip lines are benign — that reason is also
+returned for an already-expired market (negative seconds to expiry), not only an
+unparseable date. The bot correctly skips and moves on; the label is just
+misleading.
+
+### Verification
+- `npm test` — 39/39 pass (incl. 3 new bot tests).
+- `npm run typecheck` and `npm run lint` — clean.
