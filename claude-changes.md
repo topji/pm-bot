@@ -119,3 +119,55 @@ records wins and any un-stopped resolutions.
 ### Verification
 - `npm test` — 34/34 pass (incl. 3 new trade-round tests).
 - `npm run typecheck` and `npm run lint` — clean.
+
+---
+
+## 2026-06-30 — Stop polling the order book for resolved markets (404 spam)
+
+### Symptom
+The DOWN bot logged `CLOB book failed: 404 Not Found` every ~500ms from the
+stop-loss supervisor (`fetchOrderBook` → `runStopLossModeAOnce` →
+`handleStopForPosition`). It held a position in a 5-minute market that had
+already expired/resolved but wasn't yet cleared off the wallet (pending
+auto-redeem). Polymarket's `/book` 404s once a market resolves, so the supervisor
+kept trying to stop-loss a position that no longer trades — harmless (the error
+was caught) but noisy, and a pointless sell attempt + API call every poll.
+
+### Root cause
+The stop-loss supervisor ran a stop check for every held position regardless of
+whether its market was still live, and `fetchOrderBook` threw on any non-OK
+response — including the expected 404 for a resolved market.
+
+### Changes
+
+1. **`src/polymarket/stopLossSupervisor.ts`**
+   - `findMarketByTokenId` now also selects `end_date`.
+   - `handleStopForPosition` skips the stop check when `nowMs >= end_date`
+     (market at/past expiry → holds to resolution + auto-redeem; nothing to
+     stop). This removes the root cause — no book fetch for dead markets.
+
+2. **`src/polymarket/orderbook.ts`**
+   - `fetchOrderBook` treats HTTP **404** as an empty book (`{ bids: [], asks: [] }`)
+     instead of throwing. `bestBidPrice` then returns 0 and the stop monitor
+     reports `not_triggered`. Other HTTP errors (5xx/timeouts) still throw so
+     real problems stay visible. Defensive backstop for the race where a market
+     resolves mid-poll.
+
+3. **`src/polymarket/orderbook.test.ts`** — new tests: 404 yields an empty book
+   (best bid 0), and a 500 still throws.
+
+### Strategy alignment
+This matches the intended design: stop-loss is active only while the market is
+live; at expiry the position holds to resolution (now auto-redeemed by
+Polymarket). No behavioral change to live-market stops.
+
+### Verification
+- `npm test` — 36/36 pass (incl. 2 new order-book tests).
+- `npm run typecheck` and `npm run lint` — clean.
+
+### Ops note (UP bot, separate issue)
+The UP bot's `order_failed_401` was a stale `data/clob-creds.json` that didn't
+match the instance's `BOT_PRIVATE_KEY`. Resolved by deleting the file so creds
+re-derive on startup. Not a code change. (See `loadOrCreateClobCreds` — it still
+trusts any cached creds file without verifying it matches the signer; worth
+hardening later so this can't recur silently.)

@@ -16,6 +16,7 @@ import { closeTradeRoundWithStop } from "../state/tradeRounds.js";
 type MarketRow = {
   market_id: string;
   slug: string;
+  end_date: string;
   tick_size: "0.1" | "0.01" | "0.001" | "0.0001";
   neg_risk: number;
   up_token_id: string;
@@ -26,7 +27,7 @@ function findMarketByTokenId(db: Database.Database, tokenId: string): MarketRow 
   const row = db
     .prepare(
       `
-      SELECT market_id, slug, tick_size, neg_risk, up_token_id, down_token_id
+      SELECT market_id, slug, end_date, tick_size, neg_risk, up_token_id, down_token_id
       FROM markets
       WHERE up_token_id = ? OR down_token_id = ?
       LIMIT 1
@@ -62,6 +63,12 @@ async function handleStopForPosition(params: {
 
   const m = findMarketByTokenId(params.db, params.pos.asset);
   if (!m) return;
+
+  // Stop-loss only applies while the market is live. Once it's at/past expiry,
+  // the position holds to resolution and is auto-redeemed — and the CLOB /book
+  // 404s for resolved markets, so polling it is pointless noise. Skip.
+  const endMs = Date.parse(m.end_date);
+  if (Number.isFinite(endMs) && params.nowMs >= endMs) return;
 
   const out = await runStopLossModeAOnce(
     {

@@ -17,6 +17,12 @@ export async function fetchOrderBook(endpoints: Endpoints, tokenId: string): Pro
   const url = new URL("/book", endpoints.clobHost);
   url.searchParams.set("token_id", tokenId);
   const res = await fetch(url);
+  if (res.status === 404) {
+    // No book exists for this token — typically a resolved/closed market.
+    // Return an empty book so callers see "no bid" rather than throwing on
+    // every poll (the stop monitor then treats it as not-triggered).
+    return { bids: [], asks: [] };
+  }
   if (!res.ok) throw new Error(`CLOB book failed: ${res.status} ${res.statusText}`);
   const json = await res.json();
   const parsed = OrderBookSchema.safeParse(json);

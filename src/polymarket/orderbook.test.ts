@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { bestAskPrice, bestBidPrice } from "./orderbook.js";
+import { bestAskPrice, bestBidPrice, fetchOrderBook } from "./orderbook.js";
+
+const endpoints = { gammaBaseUrl: "https://x", clobHost: "https://clob.x", dataApiUrl: "https://x" };
 
 describe("bestBidPrice", () => {
   it("returns the highest bid when bids are sorted ascending (Polymarket order)", () => {
@@ -51,5 +53,29 @@ describe("bestAskPrice", () => {
   it("returns 0 for an empty or missing book", () => {
     expect(bestAskPrice({ bids: [], asks: [] })).toBe(0);
     expect(bestAskPrice({})).toBe(0);
+  });
+});
+
+describe("fetchOrderBook", () => {
+  it("returns an empty book (no bid) when the CLOB 404s a resolved market", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("Not Found", { status: 404 }));
+
+    const book = await fetchOrderBook(endpoints, "123");
+    expect(book).toEqual({ bids: [], asks: [] });
+    expect(bestBidPrice(book)).toBe(0); // => stop monitor treats as not-triggered
+
+    fetchMock.mockRestore();
+  });
+
+  it("still throws on other HTTP errors (e.g. 500)", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("boom", { status: 500, statusText: "Server Error" }));
+
+    await expect(fetchOrderBook(endpoints, "123")).rejects.toThrow(/CLOB book failed: 500/);
+
+    fetchMock.mockRestore();
   });
 });
